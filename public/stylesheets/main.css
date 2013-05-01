@@ -1,0 +1,19 @@
+
+
+
+#msgbord div {
+	background-color: #ECF0F1;
+	margin: 20px;
+	padding:10px;
+}
+
+#msgbord div div.msg {
+	text-align: left;
+	margin: 0px;
+	padding:0px;
+}
+#msgbord div div.attr {
+	text-align: right;
+	margin: 0px;
+	padding:0px;
+}
