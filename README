@@ -2,7 +2,7 @@ chat system using Comet.
 
 It's sample.
 
-```sh
+```
 cd ~
 wget http://downloads.typesafe.com/play/2.1.1/play-2.1.1.zip
 unzip play-2.1.1.zip 
