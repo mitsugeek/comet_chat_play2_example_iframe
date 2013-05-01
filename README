@@ -5,6 +5,7 @@ It's sample.
 
 
 
+### play run! ###
 
     cd ~
     wget http://downloads.typesafe.com/play/2.1.1/play-2.1.1.zip
