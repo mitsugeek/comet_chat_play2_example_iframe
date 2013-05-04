@@ -6,7 +6,7 @@
 GET     /                           controllers.Application.index()
 
 # The clock Comet stream
-GET     /inroomchat/:uuid/:uname    controllers.Application.liveClock(uuid:String, uname:String)
+GET     /inroomchat/:uname    controllers.Application.inroomchat(uname:String)
 
 POST     /tell                      controllers.Application.tell()
 

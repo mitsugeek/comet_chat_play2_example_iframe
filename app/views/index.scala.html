@@ -3,7 +3,7 @@
 
 <html>
     <head>
-        <title>Comet clock</title>
+        <title>Forever iFrame Example</title>
         <link rel="stylesheet" media="screen" href="@routes.Assets.at("stylesheets/bootstrap.css")">
         <link rel="stylesheet" media="screen" href="@routes.Assets.at("stylesheets/flat-ui.css")">
         <link rel="stylesheet" media="screen" href="@routes.Assets.at("stylesheets/main.css")">
@@ -13,54 +13,51 @@
     <body>
         <div class="container">
 
-            <h1>COMETを利用した疑似Push(iframe)</h1>
+            <h1>Forever iFrame Example</h1>
 
             <div id="outroom" class="show">
                 <form id="inroomform" >
-                    <span>ニックネーム：</span>
+                    <span>name:</span>
                     <input type="text" id="inroomname"  />
-                    <input type="submit" type="btn" value="入室" />
+                    <input type="submit" type="btn" value="in room." />
                 </form>
             </div>
             <div id="inroom" class="hide">
+                <p>只今の参加人数:<span id="ninsu"></span>人</p>
                 <div id="msgbord" style="height:300px;overflow:scroll;">
                 </div>
                 <form id="tellForm" method="POST" action="./tell" > 
-                    <input id="hiduuid" name="uuid" type="hidden" />
                     <input id="hiduname" name="uname" type="hidden" />
-                    <input name="text" type="text" value="" placeholder="文字列"/>
+                    <p>
+                        <input id="message" type="text" name="text" placeholder="メッセージを入力してください。" style="width:100%;" />
+                    </p>
                     <input type="submit" value="送信" class="btn" />
                 </form>
-            <div>
+            </div>
         </div>
         <script type="text/javascript" charset="utf-8">
-            function guid() {
-                var s4 = function(){
-                    return Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
-                }
-                return s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4();
-            }
             $(document).ready(function(){
                 $("#inroomform").on("submit", function(e){
                     e.preventDefault();
-                    if($.trim($("#inroomname").val())==""){ alert("入力してください。");return false;}
+                    if($.trim($("#inroomname").val())==""){ $("#inroomname").val("名無しさん") }
                     $("#outroom").hide();
                     $("#inroom").show();
 
-                    var uuid = guid();
                     var uname = $("#inroomname").val();
-                    var src="./inroomchat/" + uuid + "/" + uname;
+                    uname = uname.replace("/","／");
+                    var src="./inroomchat/" + uname;
                     $('body').append('<iframe style="display:none;" src="' + src + '"></iframe>');
                     var tellForm = $("#tellForm");
                     tellForm.on("submit",function(e){
-                        $("#hiduuid").val(uuid);
                         $("#hiduname").val(uname);
                         e.preventDefault();
                         $.ajax({
                             type: tellForm.attr("method"),
                             url: tellForm.attr("action"),
                             data: tellForm.serialize(),
-                            success: function(data, dataType){},
+                            success: function(data, dataType){
+                                $("#message").val("");
+                            },
                             error: function(XMLHttpRequest, textStatus, errorThrown){}
                         });
                     });
@@ -68,10 +65,11 @@
                 });
             });
             // Called for each Comet message
-            var clockChanged = function(result) {
+            var chatmsg = function(result) {
                 if(!result) return false;
                 var obj = result;
                 var msgbord = $('#msgbord');
+                $("#ninsu").html(obj.sankasu);
                 msgbord.append('<div><div class="msg">' + obj.uname + ":" + obj.message + '</div><div class="attr">[' + obj.datetime + ' / ' + obj.uuid  + ']</div>' + '</div>');
                 msgbord.scrollTop(msgbord.scrollTop()+100);
                 //msgbord.animate({scrollTop:targetY});

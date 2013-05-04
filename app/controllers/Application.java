@@ -4,31 +4,37 @@ import play.*;
 import play.mvc.*;
 import play.libs.*;
 import play.libs.F.*;
-
-import akka.util.*;
 import akka.actor.*;
-
 import java.util.*;
 import java.text.*;
 import scala.concurrent.duration.Duration;
-
 import static java.util.concurrent.TimeUnit.*;
-
-import scala.concurrent.ExecutionContext$;
-
 import org.codehaus.jackson.JsonNode;
-
+import play.mvc.Http.Request;
 import views.html.*;
 
 public class Application extends Controller {
 
-    //Comet用のアクター
-    final static ActorRef clock = Clock.instance;
+	/**
+	 * comet用のアクター
+	 */
+    final static ActorRef chatRoomInstance = ChatRoom.instance;
+    final static SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
     /**
      * メインページへのアクセス
      */
     public static Result index() {
+
+        //セッション管理
+        String uuid=session("uuid");
+        if(uuid==null) {
+        	//セッション開始
+            uuid=java.util.UUID.randomUUID().toString();
+            session("uuid", uuid);
+        }
+
+        //テンプレートをレンダリング
         return ok(index.render());
     }
     
@@ -36,18 +42,34 @@ public class Application extends Controller {
      * チャットルーム入室処理
      * アクターにCometの追加を行う
      */
-    public static Result liveClock(String _uuid, String _name) {
-        final String uuid = _uuid;
+    public static Result inroomchat(String _name) {
+        String _uuid=session("uuid");
+        if(_uuid==null) {
+            //return badRequest("no session...");
+        	//負荷テストの為、COMET作成にUUIDを振る
+            _uuid=java.util.UUID.randomUUID().toString();
+        }
+
+        //in room logger
+        in_room_logger();
+
         final String name = _name;
-        return ok(new Comet("parent.clockChanged") { 
+        final String uuid = _uuid;
+        return ok(new Comet("parent.chatmsg") { 
             @Override
             public void onConnected() {
-                Logger.info("Comet.onConnected");
-                Map<String, Comet> data = new HashMap<String,Comet>();
-                data.put(uuid + ":" + name ,this);
-                clock.tell(data); 
-            } 
+                chatRoomInstance.tell( new InRoom(this, new User(uuid,name)), null);
+            }
+            
         });
+    }
+    
+    private static void in_room_logger(){
+        Request req = play.mvc.Http.Context.current().request();
+        String remote_address = req.getHeader("x-forwarded-for") ;
+        String remoteaddress = request().remoteAddress() ;
+        String user_agent = request().getHeader("User-Agent");
+        Logger.info("[in room:" + dateFormat.format(new Date()) + "],ip:"+remoteaddress+",fip:"+remote_address + ",ua:" + user_agent);
     }
 
     /**
@@ -55,32 +77,76 @@ public class Application extends Controller {
      * アクターにメッセージを通知する
      */
     public static Result tell(){
+        String uuid=session("uuid");
+        if(uuid==null) {
+            return badRequest("no session...");
+        }
         Map<String, String[]> requestBody = request().body().asFormUrlEncoded();
         String message = requestBody.containsKey("text") ? requestBody.get("text")[0] : "";
-        String uuid = requestBody.containsKey("uuid") ? requestBody.get("uuid")[0] : "";
         String uname = requestBody.containsKey("uname") ? requestBody.get("uname")[0] : "";
-
-        Map<String, String> response = new HashMap<String,String>();
-
-
-        response.put("message",message);
-
-        Date date = new Date();
-        DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
-        response.put("datetime",df.format(date));
-        response.put("uuid",uuid);
-        response.put("uname",uname);
-        Clock.instance.tell(Json.toJson(response));
+        RoomMessage msg = new RoomMessage(uuid,uname,message);
+        chatRoomInstance.tell(msg,null);
         return ok("");
     }
  
     /**
+     * チャットルームに入室するユーザの情報 
+     */
+    public static class User {
+    	public String uuid;
+    	public String name;
+    	public User(String uuid, String name){
+    		this.uuid = uuid;
+    		this.name = name;
+    	}
+    }
+    
+    /**
+     * チャットルームに入室する際にアクターへ渡すメッセージ
+     */
+    public static class InRoom {
+    	public Comet comet;
+    	public User user;
+    	public InRoom(Comet comet,User user){
+    		this.comet = comet;
+    		this.user = user;
+    	}
+    }
+    
+    /**
+     * チャットルームに投げるメッセージ
+     */
+    public static class RoomMessage{
+    	public String message;
+    	public String datetime;
+    	public String uuid;
+    	public String uname;
+    	public String sankasu;
+    	public RoomMessage(String uuid, String uname, String message){
+    		this.uuid = uuid;
+    		this.uname = org.apache.commons.lang3.StringEscapeUtils.escapeHtml4(uname);
+    		this.message = org.apache.commons.lang3.StringEscapeUtils.escapeHtml4(message);
+    	}
+    }
+    
+    /**
      * チャットルームの通知を制御するアクター
      */
-    public static class Clock extends UntypedActor {
-        static ActorRef instance = Akka.system().actorOf(new Props(Clock.class));
-        public HashMap<Comet,String> sockets = new HashMap<Comet,String>();
-        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+    public static class ChatRoom extends UntypedActor {
+    	/**
+    	 * singleton
+    	 */
+        final static ActorRef instance = Akka.system().actorOf(new Props(ChatRoom.class));
+
+        /**
+         * ソケットの情報
+         */
+        final static public HashMap<Comet,User> sockets = new HashMap<Comet,User>();
+        
+        /**
+         * 日付のフォーマットに利用
+         */
+        final static SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
         
 
         /**
@@ -97,96 +163,64 @@ public class Application extends Controller {
         }
 
         /**
+         * Cometでの接続一覧に対してメッセージを送信する
+         */
+        public void sentMessage(RoomMessage msgObj){
+        	msgObj.datetime = dateFormat.format(new Date());
+        	msgObj.sankasu = Integer.toString(sockets.size());
+        	JsonNode message = Json.toJson(msgObj);
+            for( Map.Entry<Comet,User> ck : sockets.entrySet()) {
+                ck.getKey().sendMessage(message);
+            }
+        }
+        
+        /**
          * メッセージ受信
          */
         public void onReceive(Object message) {
 
-            // Handle connections
-            if(message instanceof Map<?,?>) {
+        	if(message instanceof InRoom) {
                 //COMET新規作成時：チャットルームに入った時。
-                Logger.info("onReceive");
-                Map<String, Comet> data = (Map<String, Comet>)message;
-                String stringObj = "";
-                Comet cometObj = null;
-                for(Map.Entry<String, Comet> e : data.entrySet()) {
-                    stringObj = e.getKey();
-                    cometObj = e.getValue();
-               }
+            	InRoom data = (InRoom)message;
+                User user = data.user;
+                Comet cometObj = data.comet;
                if(cometObj instanceof Comet) {
 
                     final Comet cometSocket = (Comet)cometObj;
-                    
-                    if(sockets.containsKey(cometSocket)) {
-                    } else {
-                        
-                        // Register disconnected callback 
-                        cometSocket.onDisconnected(new Callback0() {
-                            public void invoke() {
-                                getContext().self().tell(cometSocket);
-                            }
-                        });
-                        
-                        // New browser connected
-                        sockets.put(cometSocket, stringObj);
-                        Logger.info(stringObj);
-                        Logger.info("New browser connected (" + sockets.size() + " browsers currently connected)");
-                        
-                        Map<String, String> response = new HashMap<String,String>();
-                        String uuid = stringObj.substring(0,stringObj.indexOf(":"));
-                        String uname = stringObj.substring(stringObj.indexOf(":") + 1 , stringObj.length());
-                        response.put("message",uname + "さんが入室しました。");
-                        response.put("datetime",dateFormat.format(new Date()));
-                        response.put("uuid",uuid);
-                        response.put("uname","system");
-
-                        for( Map.Entry<Comet,String> ck : sockets.entrySet()) {
-                            ck.getKey().sendMessage(Json.toJson(response));
+ 
+                    // Register disconnected callback 
+                    cometSocket.onDisconnected(new Callback0() {
+                    	//通信が途絶えた場合の処理(退室処理)
+                        public void invoke() {
+                        	if(sockets.containsKey(cometSocket)) {
+                        		User user = sockets.get(cometSocket);
+                                // Browser is disconnected
+                                sockets.remove(cometSocket);
+                                Logger.info("Browser disconnected (" + sockets.size() + " browsers currently connected)");
+                                RoomMessage msg = new RoomMessage(user.uuid,"system",user.name + "さんが退室しました。");
+                                chatRoomInstance.tell(msg,null);
+                        	}
                         }
-                    }
+                    });
+                    
+                    // 入室
+                    sockets.put(cometSocket, user);
+                    Logger.info("New browser connected (" + sockets.size() + " browsers currently connected)");
+                    RoomMessage msg = new RoomMessage(user.uuid,"system",user.name + "さんが入室しました。");
+                    chatRoomInstance.tell(msg,null);
                }
-            }
-            if(message instanceof Comet) {
-                //Commet送信時に通信できない場合は退室とする
-                Logger.info(message.toString());
-                Comet cometSocket = (Comet)message;
-                if(sockets.containsKey(cometSocket)) {
-                    String stringObj = sockets.get(cometSocket);
 
-                    // Brower is disconnected
-                    sockets.remove((Comet)message);
-                    Logger.info("Browser disconnected (" + sockets.size() + " browsers currently connected)");
-
-                    //message
-                    Map<String, String> response = new HashMap<String,String>();
-                    String uuid = stringObj.substring(0,stringObj.indexOf(":"));
-                    String uname = stringObj.substring(stringObj.indexOf(":") + 1 , stringObj.length());
-                    response.put("message", uname + "さんが退室しました。");
-                    response.put("datetime",dateFormat.format(new Date()));
-                    response.put("uuid",uuid);
-                    response.put("uname","system");
-
-                    for( Map.Entry<Comet,String> ck : sockets.entrySet()) {
-                        ck.getKey().sendMessage(Json.toJson(response));
-                    }
-
-                }
-            }
-            
-            // メッセージ送信時はJsonNodeで受け取る
-            if(message instanceof JsonNode){
-                for( Map.Entry<Comet,String> ck : sockets.entrySet()) {
-                    ck.getKey().sendMessage((JsonNode)message);
-                }
-            }
-
-            //チェック要の通知処理空文字を定期的に送付し通信が行われているか確認する
-            if(message instanceof String) {
-                Logger.info((String)message);
+        	}else if(message instanceof RoomMessage){
+            	//チャット向けのメッセージを受信した場合
+            	this.sentMessage((RoomMessage) message);
+ 
+            }else if(message instanceof String){
+            	//チェック要の通知処理空文字を定期的に送付し通信が行われているか確認する
                 if("CHECK".equals(message)) {
-                    for( Map.Entry<Comet,String> ck : sockets.entrySet()) {
+                    for( Map.Entry<Comet,User> ck : sockets.entrySet()) {
                         ck.getKey().sendMessage((String)"");
                     }
-                }                
+                }             	
             }
         }
     }
